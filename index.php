@@ -54,8 +54,8 @@ function sess(&$ch,$i){
 	curl_setopt($ch, CURLOPT_PROXYTYPE, CURLPROXY_SOCKS5); 
     curl_setopt($ch, CURLOPT_PROXYUSERPWD, "RUS107506:xtKCPbSUIL"); 
 	curl_setopt($ch, CURLOPT_PROXYAUTH, CURLAUTH_NTLM); 
-	curl_setopt($ch, CURLOPT_COOKIEJAR, dirname(__FILE__).'/sessions/cookie'.$i.'.txt'); // сохранять куки в файл 
-    curl_setopt($ch, CURLOPT_COOKIEFILE,  dirname(__FILE__).'/sessions/cookie'.$i.'.txt');
+	curl_setopt($ch, CURLOPT_COOKIEJAR, dirname(__FILE__).'/sessions/cookie'.($i%count($proxy)).'.txt'); // сохранять куки в файл 
+    curl_setopt($ch, CURLOPT_COOKIEFILE,  dirname(__FILE__).'/sessions/cookie'.($i%count($proxy)).'.txt');
 	return $ip;
 }
 function request($url,$ref,$i=0){
