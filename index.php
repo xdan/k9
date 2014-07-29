@@ -24,16 +24,26 @@
 </head>
 <body>
 <?php
+$output = '';
+register_shutdown_function(function(){
+	global $output;
+	file_put_contents('log.log',$output."\n\n",FILE_APPEND);
+});
 define('ROOT','D:/');//dirname(__FILE__).DIRECTORY_SEPARATOR);
 include 'simple_html_dom.php';
 set_time_limit(0);
 $proxy = file('proxy');
 $sessions = array();
+
+function find($tag,$attr,$data){
+	return (preg_match_all('#<('.$tag.')[^>]+'.$attr.'=(\'|")([^\'"]+)(\'|")#Uui',$data,$list))?array_unique($list[3]):array();
+}
+
 function sess(&$ch,$i){
-	global $proxy;
+	global $proxy,$output;
 	
 	if( !count($proxy) )
-		exit('<h1>Proxy out of it</h1>');
+		exit($output.='<h1>Proxy out of it</h1>'."\n\r");
 	
 	if( $i==-1 or $i%count($proxy)==0 )
 		return '127.0.0.1';
@@ -55,6 +65,7 @@ function request($url,$ref,$i=0){
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1); // возвратить то что вернул сервер
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1); // следовать за редиректами
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);// таймаут4
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);// таймаут4
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 	curl_setopt($ch, CURLOPT_USERAGENT, $_SERVER['HTTP_USER_AGENT']);
 	$ip = sess($ch,$i);
@@ -62,7 +73,7 @@ function request($url,$ref,$i=0){
 		curl_setopt($ch, CURLOPT_REFERER, $ref);
     $data = curl_exec($ch);
     curl_close($ch);
-	echo $url,'-loaded through '.$ip.'<br>'."\n";
+	echo $url,'-loaded through '.$ip.'<br>'."\n\r";
     return $data;
 }
 //exit(request('http://xdan.ru/ip',''));
@@ -73,7 +84,7 @@ function isOpened( $url ){
 function addOpened( $url ){
 	global $opened;
 	$opened[] = $url;
-	file_put_contents('opened.txt',$url."\n",FILE_APPEND);
+	file_put_contents('opened.txt',$url."\n\r",FILE_APPEND);
 }
 function isHttp( $url ){
 	return preg_match('#^http:#i',$url);
@@ -109,7 +120,9 @@ function createPath( $url ){
 		
 	return $root;
 }
-
+function isBan($data){
+	return ((mb_strlen($data)<700) and !preg_match('#Fatal error#uis',$data));
+}
 $tree = array();
 
 function getUrl($url,$rel){
@@ -122,9 +135,9 @@ $skip = isset($_REQUEST['skip'])?intval($_REQUEST['skip']):0;
 $skip = ( !$skip and isset($_SERVER['argv'][1]) )?intval($_SERVER['argv'][1]):0;
 $pid = isset($_REQUEST['pid'])?intval($_REQUEST['pid']):0;
 $pid = ( !$pid and isset($_SERVER['argv'][2]) )?intval($_SERVER['argv'][2]):0;
-
-function parsePage( $url,$ref='',&$was=array(),$counter = 1,$percent=0 ){
-	global $sessionid,$skip,$proxy,$pid;
+$nopid = ( !$pid and isset($_SERVER['argv'][3]) )?intval($_SERVER['argv'][3]):0;
+function parsePage( $url,$ref='',&$was=array(),$depth = 1,$percent=0 ){
+	global $sessionid,$skip,$proxy,$pid,$output,$nopid;
 	if( in_array($url,$was) )
 		return true;
 		
@@ -135,13 +148,13 @@ function parsePage( $url,$ref='',&$was=array(),$counter = 1,$percent=0 ){
 	}
 	/*if( !isImage($url) )
 		usleep(rand(5,20)*100000);*/
-	if( mb_strlen($data)<700 ){		
+	if( isBan($data) ){		
 		$data = request( $url,$ref,isImage($url)?-1:$sessionid++ );
-		if( !isImage($url) and mb_strlen($data)<700 ){
+		if( !isImage($url) and isBan($data) ){
 			unset($proxy[$sessionid-1]);
 			for($k=0;$k<10;$k++){
 				$data = request( $url,$ref,$sessionid++ );
-				if( mb_strlen($data)>700 ){
+				if( !isBan($data) ){
 					break;
 				}else
 					unset($proxy[$sessionid-1]);
@@ -151,46 +164,49 @@ function parsePage( $url,$ref='',&$was=array(),$counter = 1,$percent=0 ){
 		//addOpened($url);
 	}
 	
-	if( !isImage($url) and mb_strlen($data)<700 )
-		exit('<h1>Ban</h1>'.$url.$data);
+	if( !isImage($url) and isBan($data) )
+		exit($output.='<h1>Ban</h1>'.$url.$data."\n\r");
 	
 	$was[] = $url;
 	
-	echo $url,'-'.round($percent,3).'-'.$counter.'<br>'."\n";
+	echo $out = $url.'-'.round($percent,3).'-'.$depth.'<br>'."\n\r";
 	flush();
-
 	$dir = dirname($path);
 	
-	if( isImage($url) or file_exists($dir.'/full') or (file_exists($dir.'/start') and file_get_contents($dir.'/start')!=$pid) and file_get_contents($dir.'/start')!=1 )
+	if( isImage($url) or file_exists($dir.'/full') or (!$nopid and (file_exists($dir.'/start') and file_get_contents($dir.'/start')!=$pid) and file_get_contents($dir.'/start')!=1) )
 		return true;
 	
-	if( $counter>505 )
-		exit('Very many iteration occurrences');
+	if( $depth>505 )
+		exit($output.='Very many iteration occurrences'."\n\r");
 		
-	$page = str_get_html($data);
+	//$page = str_get_html($data);
 	// выкачиваем все фото
 	$i=1;
-	foreach($page->find('img') as $img)
-		parsePage(getUrl($url,$img->src),$url,$was,$counter+1,($i++)/count($page->find('img')));
+	$resdepth = $depth+1;
+	$imgs = find('img','src',$data);
+	foreach($imgs as $src){
+		parsePage(getUrl($url,$src),$url,$was,$resdepth,($i++)/count($imgs));
+	}
 		
 	if( file_exists(ROOT.'stop.txt') )
 		return true;
 		
 	//идем рекурсивно внутрь
 	$urls = array();
-	foreach($page->find('a,area') as $a){
-		if( !isHttp($a->href) and $a->href!='' and $a->href!='/' and $a->href!='#' and !isHash($a->href) )
-			$urls[] = $a->href;
+	$hrefs = find('a|area','href',$data);
+
+	foreach($hrefs as $href){
+		if( !isHttp($href) and $href!='' and $href!='/' and $href!='#' and !isHash($href) )
+			$urls[] = $href;
 	}
-	/*print_r($urls);
-	echo '<br>';*/
-//	exit();
-	$page->clear();
+
+	/*$page->clear();
 	unset($page);
-	unset($data);
+	unset($data);*/
 	
-	if( $counter>=3 )
+	if( $depth>=3 )
 		file_put_contents($dir.'/start',$pid);
+	
 	
 	foreach($urls as $i=>$href){
 		if( file_exists(ROOT.'stop.txt') )
@@ -201,13 +217,12 @@ function parsePage( $url,$ref='',&$was=array(),$counter = 1,$percent=0 ){
 			continue;
 		}
 		
-		parsePage(getUrl($url,$href),$url,$was,$counter+1,($i+1)/count($urls));
+		parsePage(getUrl($url,$href),$url,$was,$resdepth,($i+1)/count($urls));
 	}
 	
 	file_put_contents($dir.'/full','1');
 }
 
-$opened = file('opened.txt');
 parsePage('http://hyundai.epcdata.ru');
 ?></body>
 </html>
